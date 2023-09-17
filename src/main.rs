@@ -2,7 +2,7 @@ mod icon;
 
 use std::{
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex}, io::{stdout, Write},
 };
 
 use clap::{Parser, Subcommand};
@@ -96,6 +96,9 @@ fn print_workspaces(icons: &mut IconCache) -> Result<()> {
         "{}",
         serde_json::to_string(&result).with_context(|| "Failed to encode workspace information")?
     );
+
+    stdout().flush().ok();
+
     Ok(())
 }
 
