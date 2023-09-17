@@ -1,3 +1,5 @@
+mod icon;
+
 use clap::{Parser, Subcommand};
 use color_eyre::{
     eyre::{anyhow, Context},
@@ -104,21 +106,14 @@ fn main() -> Result<()> {
         ($listener:tt) => {{
             listen!(add_active_monitor_change_handler, $listener);
             listen!(add_active_window_change_handler, $listener);
-            listen!(add_float_state_handler, $listener);
-            listen!(add_fullscreen_state_change_handler, $listener);
-            listen!(add_keyboard_layout_change_handler, $listener);
             listen!(add_layer_closed_handler, $listener);
             listen!(add_layer_open_handler, $listener);
-            listen!(add_minimize_handler, $listener);
             listen!(add_monitor_added_handler, $listener);
             listen!(add_monitor_removed_handler, $listener);
-            listen!(add_screencast_handler, $listener);
-            listen!(add_sub_map_change_handler, $listener);
             listen!(add_urgent_state_handler, $listener);
             listen!(add_window_close_handler, $listener);
             listen!(add_window_moved_handler, $listener);
             listen!(add_window_open_handler, $listener);
-            listen!(add_window_title_change_handler, $listener);
             listen!(add_workspace_added_handler, $listener);
             listen!(add_workspace_change_handler, $listener);
             listen!(add_workspace_destroy_handler, $listener);
