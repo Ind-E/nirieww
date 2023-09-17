@@ -1,5 +1,10 @@
 mod icon;
 
+use std::{
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
+
 use clap::{Parser, Subcommand};
 use color_eyre::{
     eyre::{anyhow, Context},
@@ -10,6 +15,7 @@ use hyprland::{
     event_listener::EventListener,
     shared::HyprData,
 };
+use icon::{IconCache, DEFAULT_ICON};
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -20,13 +26,25 @@ struct WorkspaceInformation {
     monitor: i64,
 }
 
-fn get_workspaces_on_monitor(monitor: &Monitor) -> Result<Vec<WorkspaceInformation>> {
+fn get_workspaces_on_monitor(
+    monitor: &Monitor,
+    icons: &mut IconCache,
+) -> Result<Vec<WorkspaceInformation>> {
     let mut workspaces = Workspaces::get()?
         .filter(|w| w.monitor == monitor.name)
         .map(|w| {
             let clients = Clients::get()?
                 .filter(|c| c.workspace.id == w.id)
-                .map(|c| String::from("?"))
+                .map(|c| {
+                    let icon = icons.get_icon(&c);
+                    icon
+                        .as_ref()
+                        .map(|i| i.clone())
+                        .map_err(|e| eprintln!("Icon lookup error {e:#?}"))
+                        .unwrap_or_else(|_| PathBuf::from(DEFAULT_ICON))
+                        .to_string_lossy()
+                        .to_string()
+                })
                 .collect();
 
             Ok(WorkspaceInformation {
@@ -63,12 +81,12 @@ fn get_workspaces_on_monitor(monitor: &Monitor) -> Result<Vec<WorkspaceInformati
     Ok(workspaces)
 }
 
-fn print_workspaces() -> Result<()> {
+fn print_workspaces(icons: &mut IconCache) -> Result<()> {
     let monitors = Monitors::get()?;
 
     let result = monitors
         .iter()
-        .map(|m| get_workspaces_on_monitor(&m))
+        .map(|m| get_workspaces_on_monitor(&m, icons))
         .collect::<Result<Vec<_>>>()?
         .into_iter()
         .flatten()
@@ -95,6 +113,7 @@ enum Command {
 fn main() -> Result<()> {
     let args = Args::parse();
     let mut event_listener = EventListener::new();
+    let icon_cache = Arc::new(Mutex::new(IconCache::new()));
 
     macro_rules! listen {
         ($event:ident, $listener:tt) => {
@@ -123,8 +142,10 @@ fn main() -> Result<()> {
     match args.command {
         Command::Workspaces => {
             listen_all!({
+                let icon_cache = icon_cache.clone();
                 move |_| {
-                    print_workspaces()
+                    let mut icon_cache = icon_cache.lock().unwrap();
+                    print_workspaces(&mut icon_cache)
                         .map_err(|e| eprintln!("{e:#?}"))
                         .ok();
                 }
