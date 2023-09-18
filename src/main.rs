@@ -1,8 +1,9 @@
 mod icon;
 
 use std::{
+    io::{stdout, Write},
     path::PathBuf,
-    sync::{Arc, Mutex}, io::{stdout, Write},
+    sync::{Arc, Mutex}, process::Command,
 };
 
 use clap::{Parser, Subcommand};
@@ -37,8 +38,7 @@ fn get_workspaces_on_monitor(
                 .filter(|c| c.workspace.id == w.id)
                 .map(|c| {
                     let icon = icons.get_icon(&c);
-                    icon
-                        .as_ref()
+                    icon.as_ref()
                         .map(|i| i.clone())
                         .map_err(|e| eprintln!("Icon lookup error {e:#?}"))
                         .unwrap_or_else(|_| PathBuf::from(DEFAULT_ICON))
@@ -105,12 +105,14 @@ fn print_workspaces(icons: &mut IconCache) -> Result<()> {
 #[derive(Parser)]
 struct Args {
     #[command(subcommand)]
-    command: Command,
+    command: Cli,
 }
 
 #[derive(Subcommand)]
-enum Command {
+enum Cli {
     Workspaces,
+    ActiveWorkspace,
+    CreateBars,
 }
 
 fn main() -> Result<()> {
@@ -143,7 +145,7 @@ fn main() -> Result<()> {
     }
 
     match args.command {
-        Command::Workspaces => {
+        Cli::Workspaces => {
             listen_all!({
                 let icon_cache = icon_cache.clone();
                 move |_| {
@@ -153,10 +155,34 @@ fn main() -> Result<()> {
                         .ok();
                 }
             });
+        }
+        Cli::ActiveWorkspace => {
+            let listener = || if let Ok(mut monitors) = Monitors::get() {
+                eprintln!("Updating active workspace");
+                if let Some(ws) = monitors.find(|m| m.focused).map(|m| m.active_workspace) {
+                    println!("{}", ws.id);
+                    stdout().flush().ok();
+                }
+            };
 
-            event_listener.start_listener().unwrap();
+            listener();
+            event_listener.add_workspace_change_handler(move |_| listener());
+            event_listener.add_active_monitor_change_handler(move |_| listener());
+        }
+        Cli::CreateBars => {
+            for m in Monitors::get()? {
+                let status = Command::new("eww").arg("open").arg(format!("bar_{}", m.id)).status()?;
+
+                if !status.success() {
+                    eprintln!("Failed to open bar_{}", m.id)
+                }
+            }
+
+            return Ok(())
         }
     }
+
+    event_listener.start_listener().unwrap();
 
     Ok(())
 }

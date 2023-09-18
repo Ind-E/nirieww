@@ -13,7 +13,7 @@ pub fn client_icon(client: &Client) -> Result<PathBuf> {
     let desktop_file = paths
         .iter()
         .find_map(|p| {
-            let file = p.join(&format!("{}.desktop", client.class));
+            let file = p.join(&format!("{}.desktop", client.class.to_lowercase()));
             if file.exists() {
                 Some(file)
             }
