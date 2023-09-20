@@ -3,7 +3,8 @@ mod icon;
 use std::{
     io::{stdout, Write},
     path::PathBuf,
-    sync::{Arc, Mutex}, process::Command,
+    process::Command,
+    sync::{Arc, Mutex},
 };
 
 use clap::{Parser, Subcommand};
@@ -20,10 +21,16 @@ use icon::{IconCache, DEFAULT_ICON};
 use serde::Serialize;
 
 #[derive(Serialize)]
+struct Client {
+    icon: String,
+    title: String,
+}
+
+#[derive(Serialize)]
 struct WorkspaceInformation {
     name: String,
     id: i32,
-    icons: Vec<String>,
+    clients: Vec<Client>,
     monitor: i64,
 }
 
@@ -37,20 +44,26 @@ fn get_workspaces_on_monitor(
             let clients = Clients::get()?
                 .filter(|c| c.workspace.id == w.id)
                 .map(|c| {
-                    let icon = icons.get_icon(&c);
-                    icon.as_ref()
+                    let icon = icons
+                        .get_icon(&c)
+                        .as_ref()
                         .map(|i| i.clone())
                         .map_err(|e| eprintln!("Icon lookup error {e:#?}"))
                         .unwrap_or_else(|_| PathBuf::from(DEFAULT_ICON))
                         .to_string_lossy()
-                        .to_string()
+                        .to_string();
+
+                    Client {
+                        icon,
+                        title: c.title,
+                    }
                 })
                 .collect();
 
             Ok(WorkspaceInformation {
                 id: w.id,
                 name: format!("{}", w.id % 10),
-                icons: clients,
+                clients,
                 monitor: monitor.id,
             })
         })
@@ -66,7 +79,7 @@ fn get_workspaces_on_monitor(
                     Some(WorkspaceInformation {
                         name: format!("{id}"),
                         id: expected_id as i32,
-                        icons: vec![],
+                        clients: vec![],
                         monitor: monitor.id,
                     })
                 } else {
@@ -157,11 +170,13 @@ fn main() -> Result<()> {
             });
         }
         Cli::ActiveWorkspace => {
-            let listener = || if let Ok(mut monitors) = Monitors::get() {
-                eprintln!("Updating active workspace");
-                if let Some(ws) = monitors.find(|m| m.focused).map(|m| m.active_workspace) {
-                    println!("{}", ws.id);
-                    stdout().flush().ok();
+            let listener = || {
+                if let Ok(mut monitors) = Monitors::get() {
+                    eprintln!("Updating active workspace");
+                    if let Some(ws) = monitors.find(|m| m.focused).map(|m| m.active_workspace) {
+                        println!("{}", ws.id);
+                        stdout().flush().ok();
+                    }
                 }
             };
 
@@ -171,14 +186,17 @@ fn main() -> Result<()> {
         }
         Cli::CreateBars => {
             for m in Monitors::get()? {
-                let status = Command::new("eww").arg("open").arg(format!("bar_{}", m.id)).status()?;
+                let status = Command::new("eww")
+                    .arg("open")
+                    .arg(format!("bar_{}", m.id))
+                    .status()?;
 
                 if !status.success() {
                     eprintln!("Failed to open bar_{}", m.id)
                 }
             }
 
-            return Ok(())
+            return Ok(());
         }
     }
 
