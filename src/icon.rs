@@ -1,23 +1,25 @@
-use std::{path::{PathBuf, Path}, collections::BTreeMap};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
 use color_eyre::{eyre::Context, Result};
 use freedesktop_desktop_entry::{default_paths, DesktopEntry};
-use hyprland::data::Client;
 use xdgkit::icon_finder;
 
-pub const DEFAULT_ICON: &str = "/usr/share/icons/Adwaita/16x16/apps/help-contents-symbolic.symbolic.png";
+pub const DEFAULT_ICON: &str =
+    "/usr/share/icons/Adwaita/16x16/apps/help-contents-symbolic.symbolic.png";
 
-pub fn client_icon(client: &Client) -> Result<PathBuf> {
+pub fn client_icon(app_id: &str) -> Result<PathBuf> {
     let paths = default_paths();
 
     let desktop_file = paths
         .iter()
         .find_map(|p| {
-            let file = p.join(&format!("{}.desktop", client.class.to_lowercase()));
+            let file = p.join(&format!("{}.desktop", app_id.to_lowercase()));
             if file.exists() {
                 Some(file)
-            }
-            else {
+            } else {
                 None
             }
         })
@@ -34,15 +36,13 @@ pub fn client_icon(client: &Client) -> Result<PathBuf> {
         })
         .transpose()?
         .unwrap_or_else(|| icon_finder::find_icon("default-application".to_string(), 128, 1))
-        .unwrap_or_else(|| {
-            PathBuf::from(DEFAULT_ICON)
-        });
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_ICON));
 
     Ok(desktop_file)
 }
 
 pub struct IconCache {
-    inner: BTreeMap<String, Result<PathBuf>>
+    inner: BTreeMap<String, Option<PathBuf>>,
 }
 
 impl IconCache {
@@ -52,13 +52,18 @@ impl IconCache {
         }
     }
 
-    pub fn get_icon(&mut self, client: &Client) -> &Result<PathBuf> {
-        if !self.inner.contains_key(&client.class) {
-            let result = client_icon(client);
+    pub fn get_icon(&mut self, app_id: &str) -> &Option<PathBuf> {
+        if !self.inner.contains_key(app_id) {
+            let result = client_icon(app_id);
 
-            self.inner.insert(client.class.clone(), result);
+            self.inner.insert(
+                app_id.to_string(),
+                result
+                    .map_err(|e| eprintln!("Failed to get icon for {app_id}. {e}"))
+                    .ok(),
+            );
         }
 
-        &self.inner[&client.class]
+        &self.inner[app_id]
     }
 }

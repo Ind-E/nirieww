@@ -5,202 +5,83 @@ use std::{
     path::PathBuf,
     process::Command,
     sync::{Arc, Mutex},
+    time::Duration,
 };
 
 use clap::{Parser, Subcommand};
 use color_eyre::{
-    eyre::{anyhow, Context},
+    eyre::{anyhow, bail, Context},
     Result,
 };
-use hyprland::{
-    data::{Clients, Monitor, Monitors, Workspaces},
-    event_listener::EventListener,
-    shared::HyprData,
-};
 use icon::{IconCache, DEFAULT_ICON};
+use niri_ipc::{Request, Response};
 use serde::Serialize;
 
 #[derive(Serialize)]
-struct Client {
-    icon: String,
-    title: String,
+pub struct Window {
+    title: Option<String>,
+    icon: Option<PathBuf>,
 }
-
 #[derive(Serialize)]
-struct WorkspaceInformation {
-    name: String,
-    id: i32,
-    clients: Vec<Client>,
-    monitor: i64,
+pub struct Workspace {
+    output: Option<String>,
+    idx: u8,
+    is_active: bool,
+    windows: Vec<Window>,
 }
 
-fn get_workspaces_on_monitor(
-    monitor: &Monitor,
-    icons: &mut IconCache,
-) -> Result<Vec<WorkspaceInformation>> {
-    let mut workspaces = Workspaces::get()?
-        .filter(|w| w.monitor == monitor.name)
-        .map(|w| {
-            let clients = Clients::get()?
-                .filter(|c| c.workspace.id == w.id)
-                .map(|c| {
-                    let icon = icons
-                        .get_icon(&c)
-                        .as_ref()
-                        .map(|i| i.clone())
-                        .map_err(|e| eprintln!("Icon lookup error {e:#?}"))
-                        .unwrap_or_else(|_| PathBuf::from(DEFAULT_ICON))
-                        .to_string_lossy()
-                        .to_string();
+fn tick(icon_cache: &mut IconCache) -> Result<()> {
+    let sock = niri_ipc::Socket::connect().context("Failed to connect to niri socket")?;
+    let response = sock
+        .send(Request::Workspaces)
+        .context("Failed to ask for workspaces")?;
 
-                    Client {
-                        icon,
-                        title: c.title,
-                    }
-                })
-                .collect();
-
-            Ok(WorkspaceInformation {
-                id: w.id,
-                name: format!("{}", w.id % 10),
-                clients,
-                monitor: monitor.id,
-            })
-        })
-        .collect::<Result<Vec<_>>>()?;
-
-    let existing_ids = workspaces.iter().map(|w| w.id).collect::<Vec<_>>();
-    // Fill out the list with empty workspaces that still fit on this monitor
-    workspaces.append(
-        &mut (1..10)
-            .filter_map(|id| {
-                let expected_id = id + monitor.id * 10;
-                if !existing_ids.contains(&(expected_id as i32)) {
-                    Some(WorkspaceInformation {
-                        name: format!("{id}"),
-                        id: expected_id as i32,
-                        clients: vec![],
-                        monitor: monitor.id,
+    match response {
+        Ok(Response::Workspaces(workspaces)) => {
+            let result = workspaces
+                .iter()
+                .map(|ws| {
+                    Ok(Workspace {
+                        output: ws.output.clone(),
+                        idx: ws.idx,
+                        is_active: ws.is_active,
+                        windows: ws
+                            .windows
+                            .iter()
+                            .map(|w| {
+                                Ok(Window {
+                                    title: w.title.clone(),
+                                    icon: w
+                                        .app_id
+                                        .as_ref()
+                                        .and_then(|app_id| icon_cache.get_icon(&app_id).clone()),
+                                })
+                            })
+                            .collect::<Result<Vec<_>>>()?,
                     })
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>(),
-    );
+                })
+                .collect::<Result<Vec<_>>>()?;
 
-    workspaces.sort_by_key(|w| w.id);
+            println!(
+                "{}",
+                serde_json::to_string(&result).context("Failed to encode as json")?
+            );
 
-    Ok(workspaces)
-}
-
-fn print_workspaces(icons: &mut IconCache) -> Result<()> {
-    let monitors = Monitors::get()?;
-
-    let result = monitors
-        .iter()
-        .map(|m| get_workspaces_on_monitor(&m, icons))
-        .collect::<Result<Vec<_>>>()?
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>();
-
-    println!(
-        "{}",
-        serde_json::to_string(&result).with_context(|| "Failed to encode workspace information")?
-    );
-
-    stdout().flush().ok();
-
-    Ok(())
-}
-
-#[derive(Parser)]
-struct Args {
-    #[command(subcommand)]
-    command: Cli,
-}
-
-#[derive(Subcommand)]
-enum Cli {
-    Workspaces,
-    ActiveWorkspace,
-    CreateBars,
+            Ok(())
+        }
+        Ok(_) => bail!("Got unexpected response from workspace request"),
+        Err(e) => bail!("Got error {e} from workspace request"),
+    }
 }
 
 fn main() -> Result<()> {
-    let args = Args::parse();
-    let mut event_listener = EventListener::new();
-    let icon_cache = Arc::new(Mutex::new(IconCache::new()));
+    let mut icon_cache = IconCache::new();
 
-    macro_rules! listen {
-        ($event:ident, $listener:tt) => {
-            event_listener.$event($listener)
-        };
-    }
-
-    macro_rules! listen_all {
-        ($listener:tt) => {{
-            listen!(add_active_monitor_change_handler, $listener);
-            listen!(add_active_window_change_handler, $listener);
-            listen!(add_layer_closed_handler, $listener);
-            listen!(add_layer_open_handler, $listener);
-            listen!(add_monitor_added_handler, $listener);
-            listen!(add_monitor_removed_handler, $listener);
-            listen!(add_urgent_state_handler, $listener);
-            listen!(add_window_close_handler, $listener);
-            listen!(add_window_moved_handler, $listener);
-            listen!(add_window_open_handler, $listener);
-            listen!(add_workspace_added_handler, $listener);
-            listen!(add_workspace_change_handler, $listener);
-            listen!(add_workspace_destroy_handler, $listener);
-        }};
-    }
-
-    match args.command {
-        Cli::Workspaces => {
-            listen_all!({
-                let icon_cache = icon_cache.clone();
-                move |_| {
-                    let mut icon_cache = icon_cache.lock().unwrap();
-                    print_workspaces(&mut icon_cache)
-                        .map_err(|e| eprintln!("{e:#?}"))
-                        .ok();
-                }
-            });
+    loop {
+        if let Err(e) = tick(&mut icon_cache) {
+            eprint!("{e:#?}")
         }
-        Cli::ActiveWorkspace => {
-            let listener = || {
-                if let Ok(mut monitors) = Monitors::get() {
-                    eprintln!("Updating active workspace");
-                    if let Some(ws) = monitors.find(|m| m.focused).map(|m| m.active_workspace) {
-                        println!("{}", ws.id);
-                        stdout().flush().ok();
-                    }
-                }
-            };
 
-            listener();
-            event_listener.add_workspace_change_handler(move |_| listener());
-            event_listener.add_active_monitor_change_handler(move |_| listener());
-        }
-        Cli::CreateBars => {
-            for m in Monitors::get()? {
-                let status = Command::new("eww")
-                    .arg("open")
-                    .arg(format!("bar_{}", m.id))
-                    .status()?;
-
-                if !status.success() {
-                    eprintln!("Failed to open bar_{}", m.id)
-                }
-            }
-
-            return Ok(());
-        }
+        std::thread::sleep(Duration::from_millis(100))
     }
-
-    event_listener.start_listener().unwrap();
-
-    Ok(())
 }
