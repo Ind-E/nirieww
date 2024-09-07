@@ -31,23 +31,17 @@ struct State {
 }
 
 impl State {
-    fn update_workspaces(&mut self, new_workspaces: Vec<niri_ipc::Workspace>) {
-        for ws in new_workspaces {
-            self.workspaces.insert(ws.id, ws);
-        }
-    }
-
-    fn update_windows(&mut self, new_windows: Vec<niri_ipc::Window>) {
-        for window in new_windows {
-            self.windows.insert(window.id, window);
-        }
-    }
-
     pub fn on_event(&mut self, event: Event) {
         match event {
-            Event::WorkspacesChanged { workspaces } => self.update_workspaces(workspaces),
-            Event::WindowsChanged { windows } => self.update_windows(windows),
-            Event::WindowOpenedOrChanged { window } => self.update_windows(vec![window]),
+            Event::WorkspacesChanged { workspaces } => {
+                self.workspaces = workspaces.into_iter().map(|ws| (ws.id, ws)).collect()
+            }
+            Event::WindowsChanged { windows } => {
+                self.windows = windows.into_iter().map(|w| (w.id, w)).collect()
+            }
+            Event::WindowOpenedOrChanged { window } => {
+                self.windows.insert(window.id, window);
+            }
             Event::WindowClosed { id } => {
                 self.windows.remove(&id);
             }
