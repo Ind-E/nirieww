@@ -1,87 +1,140 @@
 mod icon;
 
-use std::{
-    io::{stdout, Write},
-    path::PathBuf,
-    process::Command,
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use std::{collections::HashMap, path::PathBuf};
 
-use clap::{Parser, Subcommand};
 use color_eyre::{
-    eyre::{anyhow, bail, Context},
+    eyre::{bail, Context},
     Result,
 };
-use icon::{IconCache, DEFAULT_ICON};
-use niri_ipc::{Request, Response};
+use icon::IconCache;
+use itertools::Itertools;
+use niri_ipc::{Event, Request};
 use serde::Serialize;
 
 #[derive(Serialize)]
-pub struct Window {
-    title: Option<String>,
+pub struct Window<'a> {
+    title: &'a Option<String>,
     icon: Option<PathBuf>,
 }
 #[derive(Serialize)]
-pub struct Workspace {
-    output: Option<String>,
-    idx: u8,
-    is_active: bool,
-    windows: Vec<Window>,
+pub struct Workspace<'a> {
+    output: &'a Option<String>,
+    idx: &'a u8,
+    is_active: &'a bool,
+    windows: Vec<Window<'a>>,
 }
 
-fn tick(icon_cache: &mut IconCache) -> Result<()> {
-    let sock = niri_ipc::Socket::connect().context("Failed to connect to niri socket")?;
-    let response = sock
-        .send(Request::Workspaces)
-        .context("Failed to ask for workspaces")?;
+#[derive(Default)]
+struct State {
+    workspaces: HashMap<u64, niri_ipc::Workspace>,
+    windows: HashMap<u64, niri_ipc::Window>,
+}
 
-    match response {
-        Ok(Response::Workspaces(workspaces)) => {
-            let result = workspaces
-                .iter()
-                .map(|ws| {
-                    Ok(Workspace {
-                        output: ws.output.clone(),
-                        idx: ws.idx,
-                        is_active: ws.is_active,
-                        windows: ws
-                            .windows
-                            .iter()
-                            .map(|w| {
-                                Ok(Window {
-                                    title: w.title.clone(),
-                                    icon: w
-                                        .app_id
-                                        .as_ref()
-                                        .and_then(|app_id| icon_cache.get_icon(&app_id).clone()),
-                                })
-                            })
-                            .collect::<Result<Vec<_>>>()?,
-                    })
-                })
-                .collect::<Result<Vec<_>>>()?;
-
-            println!(
-                "{}",
-                serde_json::to_string(&result).context("Failed to encode as json")?
-            );
-
-            Ok(())
+impl State {
+    fn update_workspaces(&mut self, new_workspaces: Vec<niri_ipc::Workspace>) {
+        for ws in new_workspaces {
+            self.workspaces.insert(ws.id, ws);
         }
-        Ok(_) => bail!("Got unexpected response from workspace request"),
-        Err(e) => bail!("Got error {e} from workspace request"),
+    }
+
+    fn update_windows(&mut self, new_windows: Vec<niri_ipc::Window>) {
+        for window in new_windows {
+            self.windows.insert(window.id, window);
+        }
+    }
+
+    pub fn on_event(&mut self, event: Event) {
+        match event {
+            Event::WorkspacesChanged { workspaces } => self.update_workspaces(workspaces),
+            Event::WindowsChanged { windows } => self.update_windows(windows),
+            Event::WindowOpenedOrChanged { window } => self.update_windows(vec![window]),
+            Event::WindowClosed { id } => {
+                self.windows.remove(&id);
+            }
+            Event::WorkspaceActivated { id, focused } => {
+                let output = self.workspaces.iter().find_map(|(wid, ws)| {
+                    if wid == &id {
+                        ws.output.clone()
+                    } else {
+                        None
+                    }
+                });
+                for (_, ws) in &mut self.workspaces {
+                    if ws.output == output {
+                        ws.is_active = false;
+                    }
+                }
+                self.workspaces.get_mut(&id).map(|ws| {
+                    ws.is_active = true;
+                    ws.is_focused = focused;
+                });
+            }
+            Event::WorkspaceActiveWindowChanged { .. } => {}
+            Event::WindowFocusChanged { .. } => {}
+            Event::KeyboardLayoutsChanged { .. } => {}
+            Event::KeyboardLayoutSwitched { .. } => {}
+        }
+    }
+
+    pub fn print(&self, icon_cache: &mut IconCache) -> Result<()> {
+        let printable = self
+            .workspaces
+            .iter()
+            .sorted_by_key(|(_, ws)| ws.idx)
+            .map(|(_, ws)| Workspace {
+                output: &ws.output,
+                idx: &ws.idx,
+                is_active: &ws.is_active,
+                windows: self
+                    .windows
+                    .iter()
+                    .filter_map(|(_, w)| {
+                        if w.workspace_id == Some(ws.id) {
+                            Some(Window {
+                                title: &w.title,
+                                icon: w
+                                    .app_id
+                                    .as_ref()
+                                    .and_then(|app_id| icon_cache.get_icon(app_id).clone()),
+                            })
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>(),
+            })
+            .collect::<Vec<_>>();
+
+        println!(
+            "{}",
+            serde_json::to_string(&printable).context("Failed to encode as json")?
+        );
+        Ok(())
     }
 }
 
 fn main() -> Result<()> {
     let mut icon_cache = IconCache::new();
 
-    loop {
-        if let Err(e) = tick(&mut icon_cache) {
-            eprint!("{e:#?}")
-        }
+    let sock = niri_ipc::socket::Socket::connect().context("Failed to connect to niri socket")?;
+    let response = sock
+        .send(Request::EventStream)
+        .context("Failed to ask for workspaces")?;
 
-        std::thread::sleep(Duration::from_millis(100))
+    let mut state = State::default();
+
+    match response {
+        (Ok(response), mut rest) => {
+            match response {
+                niri_ipc::Response::Handled => {}
+                other => bail!("Niri responsed unexpectedly {other:?}"),
+            }
+            loop {
+                let e = rest()?;
+                state.on_event(e);
+                state.print(&mut icon_cache)?;
+            }
+        }
+        (Err(e), _) => bail!("Failed to connect to socket {e}"),
     }
 }

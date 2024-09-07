@@ -1,6 +1,6 @@
 use std::{
     collections::BTreeMap,
-    path::{Path, PathBuf},
+    path::PathBuf,
 };
 
 use color_eyre::{eyre::Context, Result};
@@ -16,7 +16,7 @@ pub fn client_icon(app_id: &str) -> Result<PathBuf> {
     let desktop_file = paths
         .iter()
         .find_map(|p| {
-            let file = p.join(&format!("{}.desktop", app_id.to_lowercase()));
+            let file = p.join(&format!("{}.desktop", app_id));
             if file.exists() {
                 Some(file)
             } else {

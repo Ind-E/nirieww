@@ -1,5 +1,5 @@
 [package]
-name = "hypreww"
+name = "nirieww"
 version = "0.1.0"
 edition = "2021"
 
@@ -12,4 +12,5 @@ freedesktop-desktop-entry = "0.5.0"
 serde = "1.0.203"
 serde_json = "1.0.118"
 xdgkit = "3.2.5"
-niri-ipc = {git = "https://github.com/TheZoq2/niri.git", branch = "workspace_list"}
+niri-ipc = {git = "https://github.com/YaLTeR/niri/", branch = "main"}
+itertools = "0.13.0"
