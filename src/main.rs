@@ -14,6 +14,7 @@ use serde::Serialize;
 #[derive(Serialize)]
 pub struct Window<'a> {
     title: &'a Option<String>,
+    id: &'a u64,
     icon: Option<PathBuf>,
 }
 #[derive(Serialize)]
@@ -86,6 +87,7 @@ impl State {
                         if w.workspace_id == Some(ws.id) {
                             Some(Window {
                                 title: &w.title,
+                                id: &w.id,
                                 icon: w
                                     .app_id
                                     .as_ref()
