@@ -8,7 +8,7 @@ use color_eyre::{
 };
 use icon::IconCache;
 use itertools::Itertools;
-use niri_ipc::{Event, Request};
+use niri_ipc::{Event, Request, Response};
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -64,10 +64,18 @@ impl State {
                     ws.is_focused = focused;
                 });
             }
-            Event::WorkspaceActiveWindowChanged { .. } => {}
-            Event::WindowFocusChanged { .. } => {}
-            Event::KeyboardLayoutsChanged { .. } => {}
-            Event::KeyboardLayoutSwitched { .. } => {}
+            Event::WorkspaceUrgencyChanged { id: _, urgent: _ } => {}
+            Event::WorkspaceActiveWindowChanged {
+                workspace_id: _,
+                active_window_id: _,
+            } => {}
+            Event::WindowFocusChanged { id: _ } => {}
+            Event::WindowUrgencyChanged { id: _, urgent: _ } => {}
+            Event::KeyboardLayoutsChanged {
+                keyboard_layouts: _,
+            } => {}
+            Event::KeyboardLayoutSwitched { idx: _ } => {}
+            Event::OverviewOpenedOrClosed { is_open: _ } => {}
         }
     }
 
@@ -112,25 +120,39 @@ impl State {
 fn main() -> Result<()> {
     let mut icon_cache = IconCache::new();
 
-    let sock = niri_ipc::socket::Socket::connect().context("Failed to connect to niri socket")?;
-    let response = sock
-        .send(Request::EventStream)
-        .context("Failed to ask for workspaces")?;
+    let mut sock = niri_ipc::socket::Socket::connect()?;
+    let reply = sock.send(Request::EventStream)?;
 
     let mut state = State::default();
 
-    match response {
-        (Ok(response), mut rest) => {
+    // match reply {
+    //     Ok(response) =>
+    // Ok(Response::Handled)) {
+    //     let mut read_event = sock.read_events();
+    //     loop {
+    //         while let Ok(event) = read_event() {
+    //             state.on_event(event);
+    //             state.print(&mut icon_cache)?;
+    //         }
+    //     }
+    // }
+    //
+    // }
+
+    match reply {
+        Ok(response) => {
             match response {
                 niri_ipc::Response::Handled => {}
                 other => bail!("Niri responsed unexpectedly {other:?}"),
             }
+            let mut read_event = sock.read_events();
             loop {
-                let e = rest()?;
-                state.on_event(e);
-                state.print(&mut icon_cache)?;
+                while let Ok(event) = read_event() {
+                    state.on_event(event);
+                    state.print(&mut icon_cache)?;
+                }
             }
         }
-        (Err(e), _) => bail!("Failed to connect to socket {e}"),
+        Err(e) => bail!("Failed to connect to socket {e}"),
     }
 }
