@@ -17,7 +17,7 @@ on all active workspaces.
 Install nirieww
 
 ```
-cargo install https://github.com/Ind-E/nirieww.git
+cargo install --git https://github.com/Ind-E/nirieww.git
 ```
 
 The default icon is currently hard-coded to be
