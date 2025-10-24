@@ -1,3 +1,7 @@
+forked from https://gitlab.com/TheZoq2/nirieww.git
+
+I will (probably) update this for new niri versions, but not much else. PRs are welcome!
+
 # NiriEww
 
 A small program that bridges niri-ipc and eww to render icons for all open windows
@@ -13,7 +17,7 @@ on all active workspaces.
 Install nirieww
 
 ```
-cargo install https://gitlab.com/TheZoq2/nirieww.git
+cargo install https://github.com/Ind-E/nirieww.git
 ```
 
 The default icon is currently hard-coded to be
