@@ -76,6 +76,8 @@ impl State {
             } => {}
             Event::KeyboardLayoutSwitched { idx: _ } => {}
             Event::OverviewOpenedOrClosed { is_open: _ } => {}
+            Event::WindowLayoutsChanged { changes: _ } => {}
+            Event::ConfigLoaded { failed: _ } => {}
         }
     }
 
